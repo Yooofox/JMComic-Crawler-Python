@@ -1,4 +1,7 @@
 name: 下载JM本子 (dispatch)
+# 2026-10-18: 把本子 ID 写进 run 名称, 便于机器人按标题精确认领本次 run
+# (workflow_dispatch 的 dispatch API 不返回 run id, 只能事后反查)
+run-name: 下载JM本子 ${{ inputs.JM_ALBUM_IDS || inputs.JM_PHOTO_IDS || 'dispatch' }}
 
 on:
   workflow_dispatch:
