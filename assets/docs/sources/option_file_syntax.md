@@ -144,10 +144,38 @@ dir_rule:
 
 * **插件配置中的kwargs参数支持引用环境变量，语法为 ${环境变量名}**
 
+> **💡 依赖安装建议**：
+> 
+> 部分插件可能需要安装额外依赖，这里推荐：
+> 
+> - **纯小白 / 完全不关心具体依赖的用户**：推荐直接在终端执行一键安装插件依赖全家桶：
+>   ```bash
+>   pip install jmcomic[plugins]
+>   ```
+> - **关注环境体积 / 仅需特定功能的用户**：无需安装全家桶，只需在用到具体插件时按需安装对应依赖即可。也可通过下面的 `plugins.dependencies_strategy` 配置处理策略。
+
 ```yaml
 # 插件的配置示例
 plugins:
+  dependencies_strategy: failed-fast
+  # dependencies_strategy: 插件依赖处理策略（默认: failed-fast）
+  # 只有在不采用全家桶安装时，才需要根据你的使用场景权衡选择以下策略：
+  #   1. failed-fast (默认): 缺失依赖时快速失败，在启动阶段直接报错并给出解决方案。
+  #      - 利：防呆、安全性最高，避免任务跑了一半因为缺依赖而报错或生成物缺失。
+  #      - 弊：只要启用的插件缺少依赖就会阻断运行，必须先安装依赖。
+  #   2. auto-install: 启动时检测到缺失依赖，自动调用 pip 在当前 Python 环境中排队静默安装。
+  #      - 利：省心无感，免去手动执行 pip install 的繁琐步骤。
+  #      - 弊：若处于无外网环境或无系统安装权限（如未激活虚拟环境），安装失败也会严格抛错。
+  #   3. ignore-only-log: 缺失依赖时仅打印 Warning 日志，不阻断运行。
+  #      - 利：容错性最强，不会因缺库中断主流程。
+  #      - 弊：依赖缺失的插件可能在执行阶段被跳过，容易造成“配置了插件却没有产出”的困惑。
+
   after_init:
+    - plugin: download_progress
+      kwargs:
+        log_file: ./jmcomic-download.log # 完整日志文件，默认值为 jmcomic-download.log
+        terminal_log_lines: 6 # 终端上方保留的最近日志行数，默认值为 6
+
     - plugin: usage_log # 实时打印硬件占用率的插件
       # log: false # 选填。所有的插件都可以配置 `log: false` 以关闭该插件执行时产生的日志输出，默认是 true
       kwargs:
@@ -186,8 +214,8 @@ plugins:
     
     # v2.5.0 引入的插件
     # 可以启动一个服务器，可以在浏览器上查看本子
-    # 基于flask框架，需要安装额外库: [pip install plugin_jm_server]
-    # 源码：https://github.com/hect0x7/plugin-jm-server
+    # 基于flask框架，需要安装额外库: [pip install jm-view-server]
+    # 源码：https://github.com/hect0x7/jm-view-server
     - plugin: jm_server 
       kwargs:
         password: '3333' # 服务器访问密码
@@ -227,10 +255,10 @@ plugins:
           rule: '{Atitle}/{Aid}_cover.jpg'
     
 
-  after_album: # 钩子（插件被调用时机）
+  after_album: # 事件（插件被调用的时机）
     - plugin: zip # 压缩文件插件
       kwargs:
-        # 压缩文件插件，配在不同钩子下面，效果不一样。可以选择配在 after_album 或者 after_photo 下
+        # 压缩文件插件，配在不同事件下面，效果不一样。可以选择配在 after_album 或者 after_photo 下
         #   配置在 after_album 下 → 整个本子合并为一个压缩文件
         #   配置在 after_photo 下 → 每个章节各一个压缩文件
         # （旧的 level 配置已废弃，如果你配置过level，比如level=photo, 请直接改用after_photo）
@@ -239,7 +267,7 @@ plugins:
         suffix: zip #压缩包后缀名，默认值为zip，可以指定为zip或者7z
         filename_rule: Atitle # 压缩文件的命名规则
         # 请注意⚠ [https://github.com/hect0x7/JMComic-Crawler-Python/issues/223#issuecomment-2045227527]
-        # filename_rule和所在钩子有对应关系
+        # filename_rule和所在事件有对应关系
         # 如果配置在 after_photo 下, filename_rule 可以写 Pxxx 和Axxx
         # 如果配置在 after_album 下, filename_rule 只能写 Axxx，不能写 Pxxx
 
@@ -291,10 +319,21 @@ plugins:
         title: jmcomic # 标题
         content: jmcomic finished !!! # 内容
 
+    # impl by @yifenliwu https://github.com/yifenliwu/jmcomic-calibre
+    - plugin: calibre_metadata # 生成 Calibre 元数据
+      kwargs:
+        dir_rule:
+          rule: 'Bd/Aid/metadata.opf' # 保存到 base_dir/本子ID/metadata.opf
+          base_dir: './'
+        include_cover: true # 同时下载封面
+        fields:
+          language: zh # 自定义元数据字段
+
   main:
     - plugin: favorite_folder_export # 导出收藏夹插件
       log: false
       kwargs:
+        max_retry: 2 # 失败后重试次数，0 表示不重试
         zip_enable: true # 对导出文件进行压缩
         zip_filepath: ${JM_DOWNLOAD_DIR}/export.zip # 压缩文件路径
         zip_password: ${ZIP_PASSWORD} # 压缩密码

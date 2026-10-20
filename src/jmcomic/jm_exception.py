@@ -63,6 +63,28 @@ class MissingAlbumPhotoException(ResponseUnexpectedException):
 class RequestRetryAllFailException(JmcomicException):
     description = '请求重试全部失败异常'
 
+    @property
+    def errors(self) -> list:
+        """返回每次请求失败的记录，其中 error 为原始异常对象。"""
+        return self.context.get(ExceptionTool.CONTEXT_KEY_RETRY_ERRORS, [])
+
+    def __str__(self):
+        if not self.errors:
+            return super().__str__()
+
+        details = []
+        for index, item in enumerate(self.errors, 1):
+            error = item['error']
+            location = item.get('url') or item.get('domain') or '未知地址'
+            retry = item.get('retry')
+            retry_text = '' if retry is None else f', retry={retry}'
+            details.append(
+                f'  {index}. {location}{retry_text}: '
+                f'{type(error).__name__}: {error}'
+            )
+
+        return f'{super().__str__()}\n失败详情:\n' + '\n'.join(details)
+
 
 class PartialDownloadFailedException(JmcomicException):
     description = '部分章节或图片下载失败异常'
@@ -70,6 +92,35 @@ class PartialDownloadFailedException(JmcomicException):
     @property
     def downloader(self):
         return self.from_context(ExceptionTool.CONTEXT_KEY_DOWNLOADER)
+
+
+class DownloadCancelledException(JmcomicException):
+    description = '下载任务已取消'
+
+    def __init__(self, msg='download cancelled', context=None):
+        """
+        按 JMComic 异常的统一结构创建下载取消异常。
+        """
+        msg = str(msg or 'download cancelled')
+        context = dict(context or {})
+        context.setdefault(ExceptionTool.CONTEXT_KEY_REASON, msg)
+        super().__init__(msg, context)
+
+    @property
+    def control(self):
+        return self.from_context(ExceptionTool.CONTEXT_KEY_CONTROL)
+
+    @property
+    def reason(self) -> str:
+        return str(self.context.get(ExceptionTool.CONTEXT_KEY_REASON, 'download cancelled'))
+
+    @property
+    def completed_results(self):
+        return list(self.context.get(ExceptionTool.CONTEXT_KEY_COMPLETED_RESULTS) or [])
+
+    @property
+    def unfinished_ids(self):
+        return list(self.context.get(ExceptionTool.CONTEXT_KEY_UNFINISHED_IDS) or [])
 
 
 class ExceptionTool:
@@ -84,6 +135,11 @@ class ExceptionTool:
     CONTEXT_KEY_RE_PATTERN = 'pattern'
     CONTEXT_KEY_MISSING_JM_ID = 'missing_jm_id'
     CONTEXT_KEY_DOWNLOADER = 'downloader'
+    CONTEXT_KEY_RETRY_ERRORS = 'retry_errors'
+    CONTEXT_KEY_CONTROL = 'control'
+    CONTEXT_KEY_REASON = 'reason'
+    CONTEXT_KEY_COMPLETED_RESULTS = 'completed_results'
+    CONTEXT_KEY_UNFINISHED_IDS = 'unfinished_ids'
 
     @classmethod
     def raises(cls,

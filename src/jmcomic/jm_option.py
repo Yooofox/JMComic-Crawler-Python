@@ -1,3 +1,5 @@
+from typing import Optional, Sequence, Union
+
 from .jm_client_impl import *
 
 
@@ -201,6 +203,9 @@ class JmOption:
         # 需要主线程等待完成的插件
         self.need_wait_plugins = []
 
+        # 依赖策略预检/处理
+        self.check_plugins_dependencies()
+
         if call_after_init_plugin:
             self.call_all_plugin('after_init', safe=True)
 
@@ -350,7 +355,9 @@ class JmOption:
             # 意图聚焦：建议配置中只展示相关的 zip 插件，剔除其他无关插件的干扰
             advice_plugins = {}
             for g, plist in plugins.items():
-                zips = [p for p in plist if p.get('plugin') == 'zip']
+                if not isinstance(plist, list):
+                    continue
+                zips = [p for p in plist if isinstance(p, dict) and p.get('plugin') == 'zip']
                 if zips:
                     advice_plugins[g] = zips
 
@@ -594,7 +601,11 @@ class JmOption:
         from .api import download_photo
         return download_photo(photo_id, self, *args, **kwargs)
 
-    def new_jm_async_client(self, cache=None, **kwargs) -> AsyncJmcomicClient:
+    def new_jm_async_client(self,
+                            cache=None,
+                            domain_list: Optional[Union[str, Sequence[str]]] = None,
+                            **kwargs,
+                            ) -> AsyncJmcomicClient:
         """
         通过 Option 配置创建异步客户端。
         从 REGISTRY_ASYNC_CLIENT 注册表查找实现类（配置项: client.async_impl），
@@ -603,9 +614,15 @@ class JmOption:
         缓存：与同步版本 new_jm_client 相同，依据 client.cache 配置决定是否启用缓存
         （默认 None 即为不缓存），并通过 CacheRegistry.enable_client_cache_on_condition 下发配置。
         """
+        if 'domain_retry_strategy' in kwargs:
+            raise TypeError('Async client does not support domain_retry_strategy')
+
         async_impl = self.client.get('async_impl', 'async_api') or 'async_api'
         clazz = JmModuleConfig.async_client_impl_class(async_impl)
-        client = clazz(self, **kwargs)
+        if domain_list is None:
+            client = clazz(self, **kwargs)
+        else:
+            client = clazz(self, domain_list=domain_list, **kwargs)
 
         # 启用缓存（与同步版本保持一致）：默认不缓存，由 client.cache 配置决定
         cache = cache if cache is not None else self.client.cache
@@ -621,6 +638,37 @@ class JmOption:
         return await download_photo_async(photo_id, self, *args, **kwargs)
 
     # 下面的方法为调用插件提供支持
+
+    def check_plugins_dependencies(self) -> None:
+        """
+        根据 plugins.dependencies_strategy 策略校验或安装已启用插件所需的依赖库。
+
+        支持的策略值：
+        - failed-fast（默认）：缺失依赖时快速失败，抛出带清晰解决方案指引的异常。
+        - auto-install：缺失依赖时以插件为维度自动调用 pip 安装缺失包。
+        - ignore-only-log：缺失依赖时仅打印 warning 日志，不阻断运行。
+
+        具体检查、安装与错误处理逻辑收口于 JmOptionPlugin.check_plugin_dependency。
+        """
+        # 保证 jm_plugin.py 被加载
+        from .jm_plugin import JmOptionPlugin
+
+        strategy = self.plugins.dependencies_strategy
+        plugin_registry = JmModuleConfig.REGISTRY_PLUGIN
+
+        for group, plist in self.plugins.src_dict.items():
+            if not isinstance(plist, list):
+                continue
+
+            for pinfo in plist:
+                if not isinstance(pinfo, dict):
+                    continue
+
+                pclass: Optional[Type[JmOptionPlugin]] = plugin_registry.get(pinfo.get('plugin'), None)
+                if pclass is None:
+                    continue
+
+                pclass.check_plugin_dependency(pinfo.get('kwargs') or {}, strategy=strategy)
 
     def call_all_plugin(self, group: str, safe=None, **extra):
         plugin_list: List[dict] = self.plugins.get(group, [])
