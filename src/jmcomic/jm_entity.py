@@ -1,7 +1,7 @@
-from collections.abc import Sequence
 from functools import lru_cache
-from common import *
+from typing import Any, Dict, Generator, List, Optional, Sequence, Tuple, TypeVar, Union
 
+from .common import *
 from .jm_config import *
 
 
@@ -18,7 +18,6 @@ class Downloadable:
 class JmBaseEntity:
 
     def to_file(self, filepath):
-        from common import PackerUtil
         PackerUtil.pack(self, filepath)
 
     @classmethod
@@ -177,7 +176,13 @@ class DetailEntity(JmBaseEntity, IndexedEntity):
     def get_properties_dict(self):
         import inspect
 
-        prefix = self.__class__.__name__[2]
+        # 自定义本子/章节子类也使用 A/P 前缀，其他实体保留原来的命名约定。
+        if self.is_album():
+            prefix = 'A'
+        elif self.is_photo():
+            prefix = 'P'
+        else:
+            prefix = self.__class__.__name__[2]
         result = {}
 
         # field
@@ -482,9 +487,11 @@ class JmAlbumDetail(DetailEntity, Downloadable):
                  description='',
                  is_favorite=False,
                  liked=False,
+                 series_id='0',
                  ):
         super().__init__()
         self.album_id: str = str(album_id)
+        self.series_id: str = str(series_id)
         self.scramble_id: str = str(scramble_id)
         self.name: str = str(name).strip()
         self.description = str(description).strip()

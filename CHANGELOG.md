@@ -5,6 +5,82 @@
 条目分类参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [2.7.12] - 2026-11-11
+
+### Summary
+
+本次更新优化域名重试机制，优先使用成功率高的域名，包括图片请求。统一导出插件的的命名、加密和安全清理，减少歧义。命令行功能丰富。
+
+### Added
+
+- 图片下载失败时自动切换图床重试，移动端模式可自动更新可用图床。
+- `jmv` 支持一次查询多个车号、直接传入本子网址，以及用 `--json` 输出详情。
+- PDF 导出支持随机密码加密，用法与 ZIP 一致。
+- 支持通过 `python -m jmcomic` 启动命令行下载。
+
+### Changed
+
+- 下载自动优先尝试失败较少的域名，重试次数统一由 `retry_times` 控制，无需再配置 `advanced_retry` 插件。
+- ZIP、PDF 和长图默认以“[JM车号]标题”命名，整本导出使用本子信息，按章导出使用章节信息。
+- 加密配置有误或缺少依赖时，会在导出前明确提示，避免生成未加密文件。
+
+### Fixed
+
+- 优化系统代理兼容性。
+- 修复按章压缩时误删其他章节图片、覆盖文件的问题。
+- 修复图片转换格式后 PDF、长图漏页，以及导出后的原图清理问题。
+- 修复下载失败时命令行仍报告成功，以及复制配置后互相影响的问题。
+
+### Removed
+
+- 网页域名自定义统一使用 `DOMAIN_HTML_LIST = [域名]`，移除 `DOMAIN_HTML`；不配置时自动获取可用域名。
+- 移除旧域名查询方法 `get_html_domain_all_via_github`，请改用 `get_html_domain_all`。
+
+## [2.7.11] - 2026-11-04
+
+### Summary
+
+本次更新新增异步网页端客户端 `AsyncJmHtmlClient`、顶层 `auth` 登录配置与插件异步执行接口，移除外部 `commonX` 依赖，并修复 `SessionPostman` 会话状态与网页端搜索总数解析问题。
+
+### Added
+
+- 新增异步网页端客户端 `AsyncJmHtmlClient`（`async_html`），支持本子/章节详情、搜索、分类排行、收藏夹、评论、每日签到及可用网页域名自动获取。
+- 新增顶层 `auth` 登录配置（支持 `username`、`password`、`cookies` 及 `${ENV}` 环境变量占位符）与 `option.login_with_option_auth()` / `login_with_option_auth_async()` 登录接口，配套新增 [登录指南](https://jmcomic.readthedocs.io/zh-cn/latest/tutorial/17_login/)。
+- `AsyncJmcomicClient` 新增 `download_album_cover` 异步封面下载；`JmOptionPlugin` 新增 `async_invoke`（配合 `JmOption.call_all_plugin_async`），支持插件异步执行与同步插件自动线程卸载。
+
+### Changed
+
+- 移除外部 `commonX` 包依赖，核心工具与 `Postman` 实现内聚至 `jmcomic.common`。
+- 未显式配置 `client.async_impl` 时，异步客户端默认跟随 `client.impl`（`html` 对应 `async_html`，其余对应 `async_api`）。
+- 顶层下载、`favorite_folder_export` 插件及 GitHub Actions 配置统一改用 `auth` 自动登录；直接调用 `client.login()` 仅作用于当前客户端实例，不再修改全局 `option`。
+
+### Fixed
+
+- 修复 `SessionPostman`（`curl_cffi_session`、`requests-session`）更新 `cookies` 时覆盖已有会话 Cookie、`copy()` 报错及 `requests-session` 未自动注入默认请求头的问题。
+- 修复网页端搜索结果总数显示 `1000+` 时正则解析失败的问题。
+
+## [2.7.10] - 2026-10-22
+
+### Summary
+
+本次更新支持 API 客户端在 `get_album_detail` 传入章节 ID 时自动重定向至父本子，新增收藏状态不匹配时的自动回滚保护，提取每日签到判重关键字为可配置类字段并补齐简体文案，优化免分割图片下载判断，并同步禁漫 APP `2.1.12` 版本号与内置 API 域名。
+
+### Added
+
+- `JmAlbumDetail` 新增 `series_id` 字段；同步与异步 API 客户端的 `get_album_detail` 新增 `allow_redirect: bool = True` 参数，当传入多章本子的子章节 ID 时默认打印 `api.album_redirect` 提示日志并自动重定向获取所属父本子详情。
+- `JmUserClient` 与 `AsyncJmcomicClient` 新增 `DAILY_ALREADY_CHECKED_IN_KEYWORDS` 类字段，统一管理每日签到重复打卡匹配关键字，方便外部自定义扩展。
+- 同步与异步 API 客户端的 `toggle_favorite_album`、`add_favorite_album`、`delete_favorite_album` 新增 `rollback_when_mismatch: bool = True` 参数，在底层 Toggle 接口返回类型与预期不符时默认自动再次请求回滚服务端状态后再抛出异常。
+
+### Changed
+
+- 更新禁漫移动端版本号 `JmMagicConstants.APP_VERSION` 至 `2.1.12`，并同步更新内置 API 域名列表 `JmModuleConfig.DOMAIN_API_LIST`。
+- 优化 `JmOption.need_to_decode_image` 判断逻辑：当图片分割数计算结果为 `0`（无需拼接还原）时直接返回 `False`，避免无效解码开销。
+
+### Fixed
+
+- 修复移动端 `daily_checkin` 在服务端返回简体中文 `"今天已经签到过了"` 以及网页端返回 `{"error": "finished"}` 时未能识别为重复签到（`CODE_ALREADY_CHECKED_IN`）而误抛异常的问题。
+- 修复移动端对已收藏本子调用 `add_favorite_album`（或对未收藏本子调用 `delete_favorite_album`）时，底层 Toggle 接口直接翻转服务端收藏状态且未回滚的问题。
+
 ## [2.7.9] - 2026-10-13
 
 ### Summary

@@ -36,17 +36,9 @@ nav:
   - 首页: index.md
   - 版本更新计划: roadmap.md
   - 配置文件指南: option_file_syntax.md
-  - Api 文档:
-    - api/client.md
-    - api/command-line.md
-    - api/config.md
-    - api/download.md
-    - api/entity.md
-    - api/option.md
-    - api/plugin.md
-    - api/toolkit.md
   - 使用教程:
     - tutorial/0_common_usage.md
+    - tutorial/17_login.md
     - tutorial/1_github_actions.md
     - tutorial/2_command_line.md
     - tutorial/5_filter.md
@@ -61,6 +53,9 @@ nav:
     - tutorial/15_download_progress.md
     - tutorial/16_shared_executors.md
 
+not_in_nav: |
+  /api/
+
 plugins:
   - search
   - mkdocstrings:
@@ -71,8 +66,6 @@ plugins:
           options:
             summary:
               functions: true
-            preload_modules:
-              - common
             docstring_style: sphinx
 
 

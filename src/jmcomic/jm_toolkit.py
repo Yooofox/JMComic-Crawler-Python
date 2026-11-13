@@ -1,13 +1,18 @@
+import os
 from datetime import datetime
 from html.parser import HTMLParser
+from re import compile
+from typing import Match
 from urllib.parse import unquote, urlparse
+
 from PIL import Image
 
 from .jm_exception import *
 
 
 class JmcomicText:
-    pattern_jm_domain = compile(r'https://([\w.-]+)')
+    pattern_jm_domain = compile(r'https?://([\w.-]+)')
+    pattern_jm_media_url = compile(r'^https?://([^/]+)(/media/.*)$')
     pattern_jm_pa_id = [
         (compile(r'(photos?|albums?)/(\d+)'), 2),
         (compile(r'id=(\d+)'), 1),
@@ -80,10 +85,11 @@ class JmcomicText:
 
     @classmethod
     def parse_to_jm_domain(cls, text: str):
-        if text.startswith(JmModuleConfig.PROT):
+        text = text.strip()
+        if text.startswith(('https://', 'http://')):
             return cls.pattern_jm_domain.search(text)[1]
 
-        return text
+        return text.strip('/')
 
     @classmethod
     def parse_to_jm_id(cls, text) -> str:
@@ -246,23 +252,43 @@ class JmcomicText:
     class DSLReplacer:
 
         def __init__(self):
-            self.dsl_dict: Dict[Pattern, Callable[[Match], str]] = {}
+            self.dsl_dict: Dict[Pattern, Callable[[Match], Optional[str]]] = {}
 
-        def parse_dsl_text(self, text) -> str:
+        def parse_dsl_text(self, text: str) -> str:
             for pattern, replacer in self.dsl_dict.items():
-                text = pattern.sub(replacer, text)
+                def _sub(match: Match, _replacer=replacer) -> str:
+                    res = _replacer(match)
+                    if res is None:
+                        ExceptionTool.raises(f'DSL解析失败，未获取到值: {match[0]}')
+                    return res
+
+                text = pattern.sub(_sub, text)
             return text
 
-        def add_dsl_and_replacer(self, dsl: str, replacer: Callable[[Match], str]):
+        def parse_dsl_text_optional(self, text: str) -> Optional[str]:
+            for pattern, replacer in self.dsl_dict.items():
+                missing = False
+
+                def _sub(match: Match, _replacer=replacer) -> str:
+                    nonlocal missing
+                    res = _replacer(match)
+                    if res is None:
+                        missing = True
+                        return ''
+                    return res
+
+                text = pattern.sub(_sub, text)
+                if missing:
+                    return None
+            return text
+
+        def add_dsl_and_replacer(self, dsl: str, replacer: Callable[[Match], Optional[str]]):
             pattern = compile(dsl)
             self.dsl_dict[pattern] = replacer
 
     @classmethod
-    def match_os_env(cls, match: Match) -> str:
-        name = match[1]
-        value = os.getenv(name, None)
-        ExceptionTool.require_true(value is not None, f'未配置环境变量: {name}')
-        return value
+    def match_os_env(cls, match: Match) -> Optional[str]:
+        return os.getenv(match[1], None)
 
     dsl_replacer = DSLReplacer()
 
@@ -273,6 +299,10 @@ class JmcomicText:
     @classmethod
     def parse_dsl_text(cls, dsl_text: str) -> str:
         return cls.dsl_replacer.parse_dsl_text(dsl_text)
+
+    @classmethod
+    def parse_dsl_text_optional(cls, dsl_text: str) -> Optional[str]:
+        return cls.dsl_replacer.parse_dsl_text_optional(dsl_text)
 
     bracket_map = {'(': ')',
                    '[': ']',
@@ -444,6 +474,38 @@ class JmcomicText:
 
         path = f'/media/albums/{cls.parse_to_jm_id(album_id)}{size}.jpg'
         return cls.format_url(path, image_domain)
+
+    @classmethod
+    def parse_jm_media_url(cls, url: str, prefer_original: bool = True) -> Optional[Tuple[str, List[str]]]:
+        """
+        解析禁漫图床链接（https://<domain>/media/...）。
+        仅识别路径以 /media/ 开头的禁漫图片链接，避免误改写第三方外链；
+        匹配时返回 (带查询参数的相对路径, 去重候选图床域名列表)。
+        prefer_original=True 时将原 URL 域名前置，保留 HTML 页面提供的图床优先级；
+        API 传 False，直接使用配置列表，不将随机生成的 URL 域名前置。
+        配置列表为空时兜底使用原域名。请求层仍按历史失败次数选择候选节点。
+        """
+        match = cls.pattern_jm_media_url.match(url)
+        if match is None:
+            return None
+        orig_domain, media_path = match[1], match[2]
+        candidates = []
+        # HTML 保留页面指定的原图床；API 跳过这一步，不给随机域名额外优先级。
+        if prefer_original:
+            candidates.append(orig_domain)
+
+        # 按配置顺序补齐备用图床并去重；失败次数相同时，靠前的节点优先。
+        for domain in JmModuleConfig.DOMAIN_IMAGE_LIST:
+            if not domain:
+                continue
+            domain = cls.parse_to_jm_domain(domain)
+            if domain not in candidates:
+                candidates.append(domain)
+
+        # 没有配置可用候选时，仍允许请求原 URL 的图床。
+        if not candidates:
+            candidates.append(orig_domain)
+        return media_path, candidates
 
     @classmethod
     def compare_versions(cls, v1: str, v2: str) -> int:
@@ -665,9 +727,10 @@ class JmPageTool:
     pattern_html_search_tags = compile(r'<a[^>]*?>(.*?)</a>')
 
     # 查找错误，例如 [错误，關鍵字過短，請至少輸入兩個字以上。]
-    pattern_html_search_error = compile(r'<fieldset>\n<legend>(.*?)</legend>\n<div class=.*?>\n(.*?)\n</div>\n</fieldset>')
+    pattern_html_search_error = compile(
+        r'<fieldset>\n<legend>(.*?)</legend>\n<div class=.*?>\n(.*?)\n</div>\n</fieldset>')
 
-    pattern_html_search_total = compile(r'class="text-white">(\d+)</span> A漫.'), 0
+    pattern_html_search_total = compile(r'class="text-white">(\d+)\+?</span>\s*(?:A漫|搜索結果|搜尋結果)'), 0
 
     # 收藏页面的本子结果
     pattern_html_favorite_content = compile(
@@ -972,6 +1035,7 @@ class JmApiAdaptTool:
             'description',
             'is_favorite',
             'liked',
+            'series_id',
             ('id', 'album_id'),
             ('author', 'authors'),
             ('total_views', 'views'),
@@ -1079,8 +1143,9 @@ class JmImageTool:
 
     @classmethod
     def save_directly(cls, resp, filepath):
-        from common import save_resp_content
-        save_resp_content(resp, filepath)
+        mkdir_if_not_exists(os.path.dirname(filepath))
+        with open(filepath, 'wb') as f:
+            f.write(resp.content)
 
     @classmethod
     def decode_and_save(cls,
